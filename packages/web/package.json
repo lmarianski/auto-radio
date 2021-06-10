@@ -1,0 +1,20 @@
+{
+  "name": "auto-radio-web",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite --port 3003",
+    "build": "tsc --noEmit && vite build",
+    "serve": "vite preview"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.1.2",
+    "vue": "^3.0.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^1.2.3",
+    "@vue/compiler-sfc": "^3.0.5",
+    "typescript": "^4.1.3",
+    "vite": "^2.3.5",
+    "vue-tsc": "^0.0.24"
+  }
+}
