@@ -1,6 +1,4 @@
 {
-	"name": "auto-radio",
-	"private": true,
 	"scripts": {
 		"build": "yarn workspaces foreach -pvi run build",
 		"dev": "yarn workspaces foreach -pvi run dev"

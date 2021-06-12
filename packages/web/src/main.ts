@@ -8,7 +8,7 @@ import App from './App.vue'
 // localStorage.debug = '*';
 
 const app = createApp(App);
-window.vue = app;
+(window as any).vue = app;
 
 app.mount('#app');
 

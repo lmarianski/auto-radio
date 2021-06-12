@@ -8,6 +8,7 @@ import { defineComponent } from 'vue';
 import HelloWorld from './components/HelloWorld.vue';
 
 import socket from "./socket";
+(window as any).socket = socket;
 
 export default defineComponent({
   name: 'App',
@@ -15,7 +16,6 @@ export default defineComponent({
     HelloWorld
   },
   data() {return {
-
   }},
   mounted() {
     socket.on("connect", () => {
