@@ -1,6 +1,11 @@
 <template>
-  <img alt="Vue logo" src="./assets/logo.png" />
-  <HelloWorld msg="Hello Vue 3 + TypeScript + Vite" />
+  <v-app>
+    <v-main>
+      <v-container fluid>
+        
+      </v-container>
+    </v-main>
+  </v-app>
 </template>
 
 <script lang="ts">
@@ -15,8 +20,10 @@ export default defineComponent({
   components: {
     HelloWorld
   },
-  data() {return {
-  }},
+  data() {    
+return {
+    }  
+},
   mounted() {
     socket.on("connect", () => {
       console.log('heehoo');
@@ -24,14 +31,3 @@ export default defineComponent({
   }
 });
 </script>
-
-<style>
-#app {
-  font-family: Avenir, Helvetica, Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-align: center;
-  color: #2c3e50;
-  margin-top: 60px;
-}
-</style>

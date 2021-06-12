@@ -1,15 +1,10 @@
-import "./polyfills";
+import "./polyfills"
 
-import { createApp } from 'vue'
-import App from './App.vue'
+import { createApp } from 'vue';
+import vuetify from './plugins/vuetify';
+import App from './App.vue';
 
+const app = createApp(App)
+app.use(vuetify)
 
-
-// localStorage.debug = '*';
-
-const app = createApp(App);
-(window as any).vue = app;
-
-app.mount('#app');
-
-// (app as any).$io = io();
+app.mount('#app')
