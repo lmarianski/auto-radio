@@ -1,33 +1,49 @@
 import { Socket, Server } from 'socket.io';
 
-import { RTCPeerConnection, RTCIceCandidate } from 'werift';
+import { RTCPeerConnection, RTCIceCandidate, RTCSessionDescription } from 'werift';
 
 export default class WebRTCManager {
 
 	servers = undefined;
 
-	// connections: {
-	// 	[key: string]: {
-	// 		pc: RTCPeerConnection;
-	// 	}
-	// } = {};
+	connections: {
+		[key: string]: RTCPeerConnection;
+	} = {};
 
-	constructor(io: Server) {
+	constructor(io: Server, { polite } = { polite: false }) {
 		io.use((socket, next) => {
 
-			socket.on('webrtc-begin', async () => {
-				const conn = this.createConnection(socket);
+			// socket.on('webrtc', () => {
+			if (this.connections[socket.id]) {
+				this.connections[socket.id].close();
+			}
 
-				const desc = await conn.createOffer();
+			this.connections[socket.id] = this.createConnection(socket);
+			socket.on("webrtc-msg", (data) => this.onWebRTCMessage(socket, data));
+			// })
+		
+			// socket.on('webrtc-begin', async () => {
+			// 	if (this.connections[socket.id]) {
+			// 		const {listener, pc} = this.connections[socket.id];
 
-				await conn.setLocalDescription(desc);
+			// 		console.log("Close old conn")
 
-				socket.emit('webrtc-offer', desc);
+			// 		pc.close();
+			// 		socket.removeListener("webrtc-msg", listener);
+			// 	}
 
-				socket.once('webrtc-answer', async (desc) => {
-					await conn.setRemoteDescription(desc);
-				});
-			});
+			// 	const pc = this.createConnection(socket);
+
+			// 	const listener = (data: any) => this.onWebRTCMessage(socket, pc, data);
+			// 	socket.on("webrtc-msg", listener);
+
+			// 	this.connections[socket.id] = {
+			// 		pc,
+			// 		listener
+			// 	}
+
+			// 	socket.emit("webrtc-ready");
+			// });
 
 			next();
 		});
@@ -36,18 +52,55 @@ export default class WebRTCManager {
 	createConnection(socket: Socket) {
 		const pc = new RTCPeerConnection(this.servers);
 	
-		pc.onicecandidate = event => {
-			socket.emit('webrtc-ice-candidate', event.candidate);
+		pc.onicecandidate = ({candidate}) => {
+			socket.emit('webrtc-msg', {candidate});
 		};
-		socket.on('webrtc-ice-candidate', (candidate: RTCIceCandidate) => {
-			pc.addIceCandidate(candidate);
-		});
+		pc.onnegotiationneeded = async () => {
+			const offer = await pc.createOffer();
+			if (pc.signalingState != "stable") return;
+			await pc.setLocalDescription(offer);
+			socket.emit('webrtc-msg', { description: pc.localDescription });
+		};
 
-		// pc.onconnectionstatechange = (e) => this.onIceStateChange(pc)
-	
-
+		pc.ontrack = ({streams}) => {
+			// console.log("Track received", track);
+			// track.on("", () => {});
+			streams[0].getTracks()[0].addEventListener('data', () => {
+				console.log("DAta")
+			});
+		}
 
 		return pc;
+	}
+
+	private async onWebRTCMessage(
+		socket: Socket,
+		{description, candidate}: {
+			description: RTCSessionDescription,
+			candidate: RTCIceCandidate
+		},
+		opts = {polite: true}
+	) {
+		const pc = this.connections[socket.id];
+
+		if (description) {
+			if (description.type == "offer" && pc.signalingState != "stable") {
+				if (!opts.polite) return;
+				await Promise.all([
+					pc.setLocalDescription({ type: "rollback" } as any),
+					pc.setRemoteDescription(description)
+				]);
+			} else {
+				await pc.setRemoteDescription(description);
+			}
+
+			if (description.type === "offer") {
+				await pc.setLocalDescription(await pc.createAnswer());
+				socket.emit('webrtc-msg', { description: pc.localDescription });
+			}
+		} else if (candidate) {
+			await pc.addIceCandidate(candidate);
+		}
 	}
 
 	private onIceCandidate(pc: RTCPeerConnection, e: any) {

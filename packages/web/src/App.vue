@@ -24,14 +24,15 @@
 						</ul>
 					</v-col>
 					<v-col cols="6" style="text-align: center;">
-						<player 
-							:nowPlaying="nowPlaying || { name: 'naenae' }" 
+						<player
+							:nowPlaying="nowPlaying || { name: 'naenae' }"
 							:progress="progress"
 							:playing="playing"
 							@play="socket.emit('play')"
 							@pause="socket.emit('pause')"
 							@skip="socket.emit('skip')"
 						></player>
+						<v-btn @click="sendMic">Mic</v-btn>
 					</v-col>
 				</v-row>
 			</v-container>
@@ -40,12 +41,55 @@
 </template>
 
 <script lang="ts">
+import { Socket } from 'socket.io-client';
 import { defineComponent } from 'vue';
 // import HelloWorld from './components/HelloWorld.vue';
 import Player from './components/Player.vue';
 
 import socket from "./socket";
 (window as any).socket = socket;
+
+function createConnection(socket: Socket, {
+	polite
+} = { polite: true }) {
+	const pc = new RTCPeerConnection();
+
+	pc.onconnectionstatechange = state => console.log(state);
+
+	pc.onicecandidate = ({ candidate }) => {
+		socket.emit("webrtc-msg", { candidate })
+	};
+	pc.onnegotiationneeded = async () => {
+		const offer = await pc.createOffer();
+		if (pc.signalingState != "stable") return;
+		await pc.setLocalDescription(offer);
+		socket.emit('webrtc-msg', { description: pc.localDescription });
+	};
+
+	socket.on("webrtc-msg", async ({ description, candidate }) => {
+		console.log("webrtc msg", description, candidate)
+		if (description) {
+			if (description.type == "offer" && pc.signalingState != "stable") {
+				if (!polite) return;
+				await Promise.all([
+					pc.setLocalDescription({ type: "rollback" }),
+					pc.setRemoteDescription(description)
+				]);
+			} else {
+				await pc.setRemoteDescription(description);
+			}
+
+			if (description.type === "offer") {
+				await pc.setLocalDescription(await pc.createAnswer());
+				socket.emit('webrtc-msg', { description: pc.localDescription });
+			}
+		} else if (candidate) {
+			await pc.addIceCandidate(candidate);
+		}
+	});
+
+	return pc;
+}
 
 export default defineComponent({
 	name: 'App',
@@ -57,40 +101,17 @@ export default defineComponent({
 		nowPlaying: null,
 		progress: 0,
 		playing: false,
-		socket
+		socket,
 	}),
 	mounted() {
-
-		const pc = new RTCPeerConnection();
-
-		pc.onicecandidate = e => {
-			socket.emit("webrtc-ice-candidate", e.candidate)
-		}
-		socket.on("webrtc-ice-candidate", candidate => {
-			pc.addIceCandidate(candidate);
-		})
-
+		(window as any).vue = this;
 		socket.on("connect", () => {
-			socket.emit("webrtc-begin");
-		});
+			console.log('Connect')
+			// socket.emit("webrtc-begin");
 
-		socket.on("webrtc-offer", async (desc) => {
-			await pc.setRemoteDescription(desc);
+			// socket.on('webrtc-ready', async () => {
 
-			const answer = await pc.createAnswer();
-
-			const media = await navigator.mediaDevices.getUserMedia({
-				audio: true,
-				video: false
-			});
-
-			media.getAudioTracks().forEach(track => {
-				pc.addTrack(track);
-			})
-
-			await pc.setLocalDescription(answer);
-
-			socket.emit("webrtc-answer", answer);
+			// })
 		});
 
 		socket.on("tracks", (tracks) => {
@@ -112,6 +133,18 @@ export default defineComponent({
 	methods: {
 		upvote(id: string) {
 			socket.emit("vote", id)
+		},
+		async sendMic() {
+			navigator.mediaDevices.getUserMedia({
+				audio: true,
+				video: false
+			}).then((media) => {
+				const pc = createConnection(socket);
+
+				media.getAudioTracks().forEach(track => {
+					pc.addTrack(track);
+				});
+			});
 		}
 	},
 	computed: {
