@@ -7,212 +7,145 @@ dotenv.config();
 import express from 'express';
 import { Server } from 'socket.io';
 
-import db, { addTracks, getTracks, incrementVotes } from "./db";
-import spotifyB, { getYTUrl } from "./spotify";
-// console.log(spotify);
+import db, { addTracks, DBTrack, getMostPopular, getTracks, incrementVotes, updateTrack } from "./db";
+import spotify, { getYTUrl } from "./spotify";
+import { Player } from './player';
+import WebRTCManager from './webrtc';
 
-const spotify = spotifyB();
+
+// console.log(spotify);
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+const player = new Player();
+
 const webPath = path.join('..', 'web', 'dist');
 const port = process.env.PORT || 3000;
 
+
 app.use(express.static(webPath));
 
-io.on('connection', (socket) => {
+new WebRTCManager(io);
+
+io.on('connection', async (socket) => {
+	socket.emit('tracks', await getTracks());
+	socket.emit('nowPlaying', player.nowPlaying);
+	socket.emit("playing", (player.audio || {}).playing || false);
+
 	socket.on('getTracks', async () => {
 		socket.emit('tracks', await getTracks());
 	});
-	socket.on("vote", (id) => {
+	socket.on("vote", async (id) => {
 		incrementVotes(id);
-	});
-	socket.on("addTrack", async (uri) => {
-		addTracks(uri);
 		io.emit("tracks", await getTracks());
 	});
-	socket.on("play", async (uri) => {
+	socket.on("addTrack", async (uri) => {
+		await addTracks(uri);
+		io.emit("tracks", await getTracks());
+	});
+	socket.on("pause", async (id) => {
+		pause();
+	});
+	socket.on("play", async (id) => {
+		play();
+	});
+	socket.on("skip", async (id) => {
+		skip();
+	});
+	socket.on("start", async (uri) => {
 		// addTracks(uri);
 		// io.emit("tracks", await getTracks());
 			//https://open.spotify.com/track/7qH6ICtmf08M8l3bvM27Gc?si=2c5bf0f2d2eb4c71
-		play(uri).then(() => {
-			console.log("Playback done");
-		});
+		let tracks = (await getTracks()).filter(el => el.uri === uri);
+
+		if (tracks.length === 0) {
+			await addTracks(uri);
+			tracks = (await getTracks()).filter(el => el.uri === uri)
+		}
+
+		if (tracks[0]) {
+			player.start(tracks[0]).then(() => {
+				console.log("Playback done");
+			});
+		}
 	});
 });
 
-server.listen(port, () => {
-	console.log(`Example app listening at http://localhost:${port}`)
+function play() {
+	player.play();
+	io.emit("playing", player.audio.playing);
+}
+
+function pause() {
+	player.pause();
+	io.emit("playing", player.audio.playing);
+}
+
+function skip() {
+	player.stop();
+	playNext();
+}
+
+player.on('start', () => {
+	io.emit('nowPlaying', player.nowPlaying);
+})
+
+player.on('progress', el => {
+	console.log((el*100).toFixed(2)+"%");
+	io.emit('progress', el);
+});
+
+function pick<T>(arr: T[], num: number): T[] {
+	return new Array(num)
+		.fill(0)
+		.map(el => Math.floor(Math.random()*arr.length))
+		.map(el => arr[el])
+}
+
+const playNext = async () => {
+	const track = await getMostPopular();
+
+	if (track) {
+		console.log("Now playing: "+track.name+" by "+track.author, );
+
+		player.start(track).then(() => {
+			playNext();
+		})
+
+		track.votes = 0;
+		updateTrack(track);
+
+		const tracks = await getTracks();
+		// const votes = Math.floor(Math.random()*tracks.length)+Math.floor(tracks.length/2);
+
+		const votes = Math.floor(tracks.length/2);
+
+		pick(tracks, votes).forEach(el => {
+			if (el.uri !== track.uri) {
+				el.votes++;
+
+				updateTrack(el);
+			}
+		})
+		
+		io.emit("tracks", tracks);
+	}
+};
+
+server.listen(port, async () => {
+	console.log(`Example app listening at http://localhost:${port}`);
 
 	//https://open.spotify.com/track/7qH6ICtmf08M8l3bvM27Gc?si=2c5bf0f2d2eb4c71
 	// play('spotify:7qH6ICtmf08M8l3bvM27Gc').then(() => {
 	// 	console.log("Playback done");
 	// });
+
+	await spotify;
+
+	playNext();
 });
-
-import ytdl from 'ytdl-core';
-
-import lame from '@suldashi/lame';
-import Speaker from 'speaker';
-
-import ffmpeg from 'fluent-ffmpeg';
-
-import fs from 'fs';
-
-
-const songsFilePath = path.join("data", "songs.json");
-let songs: {
-	[key: string]: {
-		name: string;
-		author: string;
-	}
-} = {};
-
-songs = Object.assign(songs, JSON.parse(
-	fs.readFileSync(songsFilePath).toString()));
-
-function addSong(uri: string, name: string, author: string) {
-	songs[uri] = {
-		name, author
-	};
-	fs.writeFileSync(songsFilePath, JSON.stringify(songs, null, "\t"));
-}
-
-function play(uri: string): Promise<void> {
-	return new Promise(async (resolve, reject) => {
-		const [service, id] = uri.split(":");
-
-		if (id) {
-			const p = await download(uri);
-			console.log("Done")
-
-			const decoder = new lame.Decoder();
-			const speaker = new Speaker();
-			// const p  = path.join("data", "songs", "Jon Hopkins - Candles.mp3")
-
-			fs.createReadStream(p)
-				.pipe(decoder)
-				.pipe(speaker);
-
-			speaker.on("finish", () => {
-				return resolve();
-			})
-		}
-	});
-}
-
-function isURL(str: string) {
-	let url;
-	try {
-		url = new URL(str);
-	} catch (_) {
-		return false;
-	}
-	return url;
-}
-
-function download(uri: string): Promise<string> {
-	return new Promise(async (resolve, reject) => {
-		let [service, id] = uri.split(":");
-
-		let i, song, url;
-
-		const songDir = path.join('.', 'data', 'songs');
-		let filePath = '';
-
-		url = isURL(uri);
-		if (url && uri.includes("youtube")) {
-			service = "youtube";
-			id = (url as URL).searchParams.get('v') as string;
-			
-			uri = service+":"+id;
-		}
-
-		if (song = songs[uri]) {
-			filePath = path.join(songDir, `${song.author} - ${song.name}.mp3`)
-
-			console.log(song)
-
-			// return;
-
-			if (fs.existsSync(filePath)) {
-				return resolve(filePath);
-			} else {
-				// service = "youtube";
-				i = await getYTUrl({
-					name: song.name,
-					artists: [
-						{ name: song.author }
-					]
-				});
-			}
-		}
-
-		switch (service) {
-			case ("spotify"):
-				if (!i) {
-					await spotify;
-					i = await getYTUrl(id);
-				}
-			case ("youtube"):
-				const stream = ytdl(i || 'http://www.youtube.com/watch?v=' + id, {
-					quality: 'highestaudio',
-					filter: 'audioonly'
-					// filter: (format) => format.hasVideo === false && format.hasAudio === true && format.container === "mp4"
-				});
-
-
-				stream.on('info', (info, format) => {
-					let title: string = info.videoDetails.title;
-					title = title.replace(/\w\S*/g, (w) => (w.replace(/^\w/, (c) => c.toUpperCase())));
-					let [author, name] = title.split("-");
-					
-					if (author && !name) {
-						name = author;
-						author = "Unknown";
-					}
-
-					filePath = path.join('.', 'data', 'songs', `${author} - ${name}.mp3`);
-
-					info.formats.forEach((el: any) => {
-						console.log(el.mimeType);
-					})
-
-					if (!songs[uri]) {
-						addSong(uri, name, author);
-					}
-
-					if (!fs.existsSync(filePath)) {
-						ffmpeg(stream)
-							.format('mp3')
-							.pipe(fs.createWriteStream(filePath))
-							.on('end', () => resolve(filePath));
-					} else {
-						return resolve(filePath);
-					}
-				});
-
-				stream.on('error', (err) => {
-					console.error(err);
-				})
-
-				// stream.on('end', () => {
-				// 	return resolve(filePath);
-				// })
-				break;
-			default:
-				return reject();
-		}
-	});
-}
-
-
-
-
-
-
 
 // if (process.env.MODE === 'dev') {
 // 	app.get("/*", (oreq, ores) => {

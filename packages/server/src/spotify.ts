@@ -1,5 +1,6 @@
 import SpotifyWebApi from 'spotify-web-api-node';
 import ytSearch from 'youtube-search';
+import { DBTrack } from './db';
 
 let tm = 0;
 
@@ -9,7 +10,7 @@ const spotifyApi = new SpotifyWebApi({
 	// redirectUri: 'http://www.example.com/callback'
 });
 
-export default function login(expired?: boolean) {
+export function login(expired?: boolean) {
 	if (tm) {
 		clearTimeout(tm);
 	}
@@ -45,20 +46,24 @@ type Track = {
 export async function getYTUrl(id: string): Promise<string>;
 export async function getYTUrl(track: Track): Promise<string>;
 export async function getYTUrl(trackOrId: string | Track): Promise<string> {
-	const track = typeof trackOrId === 'object' ? 
-	trackOrId :
-	(await spotifyApi.getTrack(trackOrId)).body;
+	const track = typeof trackOrId === 'object' ?
+		trackOrId :
+		(await spotifyApi.getTrack(trackOrId)).body;
 
 	let results: any[] = [{}];
 
 	try {
 
-		results = (await ytSearch(`${track.artists[0].name} ${track.name}`, {
+		const term = `${track.artists[0].name} - ${track.name}`;
+
+		results = (await ytSearch(term, {
 			key: process.env.YT_KEY,
 			type: 'video',
-			order: 'rating',
+			// order: 'rating',
 			videoCategoryId: '10' //Music
 		})).results;
+
+		// console.dir(results, 1)
 
 	} catch (e) {
 		if (e) {
@@ -69,4 +74,4 @@ export async function getYTUrl(trackOrId: string | Track): Promise<string> {
 	return results[0].link;
 }
 
-// export default spotifyApi;
+export default login();

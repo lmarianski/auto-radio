@@ -1,1 +1,1 @@
-declare module '@suldashi/lame';
+declare module 'wrtc';
