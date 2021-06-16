@@ -41,7 +41,7 @@ export class Player extends EventEmitter {
 
 	nowPlaying!: DBTrack;
 
-	audio!: Audic;
+	private audio!: Audic;
 
 	private int!: NodeJS.Timeout;
 
@@ -49,18 +49,41 @@ export class Player extends EventEmitter {
 		super();
 	}
 
-	pause() {
-		console.log("Paused")
-		this.audio.pause();
+	get playing() {
+		return (this.audio && this.audio.playing) || false;
 	}
 
-	play() {
-		this.audio.play();
+	get progress() {
+		const currentTime = this.audio.currentTime;
+		const duration    = this.audio.duration;
+
+		const result = currentTime/duration;
+
+		// console.log(result);
+		// return 0;
+		// return !result ? currentTime === duration ? 1 : 0 : result;
+	
+		return result || 0; 
+	}
+
+	private stateChange() {
+		this.emit("playStateChange", this.playing);
+	}
+
+	pause() {
+		this.audio.pause();
+		this.emit("pause");
+		this.stateChange();
+	}
+
+	async play() {
+		await this.audio.play();
+		this.emit("play");
+		this.stateChange();
 	}
 
 	stop() {
-		console.log("Stop");
-		this.audio.destroy();
+		this.pause();
 		clearInterval(this.int);
 	}
 
@@ -68,43 +91,47 @@ export class Player extends EventEmitter {
 		return new Promise(async (resolve, reject) => {
 			if (track) {
 				const p = await this.download(track);
-				
-				if (this.audio) {
-					console.log("Audio exists")
-					this.stop();
-				}
-				
-				this.audio = new Audic(p);
 
-				this.audio.play();
+				if (!this.audio) {
+					this.audio = new Audic(p);
+				} else {
+					console.log(this.audio)
+
+					// this.stop();
+					this.audio.src = p;
+				}
+
 				this.nowPlaying = track;
+
+				console.log('play');
+				await this.play();
+				this.emit('start');
+
+				console.log(this.audio)
 
 				this.int = setInterval(() => {
 					let flag = false;
 
 					if (this.audio) {
-						const prg = this.audio.currentTime/this.audio.duration;
-						if (prg === 0 && !flag) {
-							flag = true;
+						// if (this.progress === 0 && !flag) {
+						// 	flag = true;
+						// 	this.emit('start');
+						// }
 
-							setTimeout(() => {
-								resolve();
-							}, this.audio.duration*1000);
-						
-							this.emit('start');
+						if (this.progress >= 0 && this.playing) {
+							this.emit('progress', this.progress);
 						}
 
-						if (prg >= 0 && this.audio.playing) {
-							this.emit('progress', prg);
-						}
+						console.log(this.progress, this.audio.currentTime, this.audio.duration);
 
-						if (prg === 1) {
+						if (this.progress === 1) {
+							console.log("end")
 							clearInterval(this.int);
 							this.emit('end');
+							return resolve();
 						}
 					}
 				}, 1000);
-
 			}
 		});
 	}
