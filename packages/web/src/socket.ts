@@ -9,9 +9,9 @@ socket.onAny((event, ...args) => {
 });
 
 if (import.meta.env.DEV) {
-	localStorage.debug = '*';
-} else {
-	localStorage.debug = '';
+	// localStorage.debug = '*';
+} else if (localStorage.debug === '*') {
+	localStorage.removeItem('debug');
 }
 
 export default socket;
