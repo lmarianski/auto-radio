@@ -1,14 +1,19 @@
 import fs from "fs";
 import path from "path";
 import EventEmitter from 'events';
+import * as stream from "stream";
 
-import ffmpeg from 'fluent-ffmpeg';
+import Ffmpeg from 'fluent-ffmpeg';
+
 import ytdl from "ytdl-core";
 
-import Audic from 'audic';
+// import Audic from 'audic';
+
+import Speaker from 'speaker';
 
 import { DBTrack, updateTrack } from "./db";
 import spotify, { getYTUrl } from "./spotify";
+import e from "express";
 
 export async function resolveTrack(uri: string, dbtrack?: DBTrack) {
 	let tr = {} as DBTrack;
@@ -36,55 +41,113 @@ export async function resolveTrack(uri: string, dbtrack?: DBTrack) {
 	return tr;
 }
 
+// import duplex from 'duplexify';
+
+// function ffmpegStream(ffmpeg: Ffmpeg.FfmpegCommand) {
+// 	const is = new stream.PassThrough();
+// 	const os = new stream.PassThrough();
+
+// 	const str = duplex(is, os);
+
+// 	ffmpeg
+// 		.input(is)
+// 		.on('error', err => str.emit('error', err))
+// 		.pipe(os);
+
+// 	return str;
+// }
 
 export class Player extends EventEmitter {
 
 	nowPlaying!: DBTrack;
 
-	private audio!: Audic;
+	private speaker!: Speaker;
+	private command!: Ffmpeg.FfmpegCommand;
 
-	private int!: NodeJS.Timeout;
+	playing = false;
+	progress = 0;
 
 	constructor() {
 		super();
-	}
 
-	get playing() {
-		return (this.audio && this.audio.playing) || false;
-	}
-
-	get progress() {
-		const currentTime = this.audio.currentTime;
-		const duration    = this.audio.duration;
-
-		const result = currentTime/duration;
-
-		// console.log(result);
-		// return 0;
-		// return !result ? currentTime === duration ? 1 : 0 : result;
-	
-		return result || 0; 
+		this.speaker = this.createSpeaker();
 	}
 
 	private stateChange() {
 		this.emit("playStateChange", this.playing);
 	}
 
+	play() {
+		this.playing = true;
+		this.speaker.uncork();
+		this.stateChange();
+	}
+
+
 	pause() {
-		this.audio.pause();
-		this.emit("pause");
+		this.playing = false;
+		this.speaker.cork();
 		this.stateChange();
 	}
 
-	async play() {
-		await this.audio.play();
-		this.emit("play");
-		this.stateChange();
+	stop(): Promise<void> {
+		return new Promise((resolve, reject) => {
+			this.playing = false;
+			this.stateChange();
+
+			const e = () => {
+				setTimeout(resolve, 1000);
+			}
+
+			if ((this.command as any).done) {
+				e();
+			} else {
+				this.command.once('error', e);
+			}
+			
+
+			this.command.kill('SIGKILL');
+		})
 	}
 
-	stop() {
-		this.pause();
-		clearInterval(this.int);
+	async destroy() {
+		await this.stop();
+		this.speaker.destroy();
+	}
+
+	private ffmpeg(input: string | stream.Readable, callback?: () => void) {
+		return Ffmpeg(input)
+			.format('s16le')
+			.audioCodec('pcm_s16le')
+			.on('start', () => {
+				this.playing = true;
+				this.emit('start');
+			})
+			.on('progress', ({ percent }) => {
+				this.progress = (percent || 0) / 100;
+				this.emit('progress', this.progress);
+			})
+			.on('error', err => console.error(err.message))
+			.on('end', () => {
+				this.playing = false;
+				this.emit('end');
+	
+				(this.command as any).done = true;
+
+				console.log('END')
+
+				if (callback)
+					callback();
+			});
+	}
+
+	private createSpeaker(): Speaker {
+		return new Speaker({
+			channels: 2,
+			bitDepth: 16,
+			signed: true,
+			sampleRate: 48000
+		} as any);
 	}
 
 	start(track: DBTrack): Promise<void> {
@@ -92,46 +155,26 @@ export class Player extends EventEmitter {
 			if (track) {
 				const p = await this.download(track);
 
-				if (!this.audio) {
-					this.audio = new Audic(p);
-				} else {
-					console.log(this.audio)
-
-					// this.stop();
-					this.audio.src = p;
-				}
-
 				this.nowPlaying = track;
 
-				console.log('play');
-				await this.play();
-				this.emit('start');
+				this.progress = 0;
 
-				console.log(this.audio)
+				// if (this.speaker) {
+				// 	this.speaker.destroy();
+				// }
 
-				this.int = setInterval(() => {
-					let flag = false;
+				// this.speaker = this.createSpeaker();
 
-					if (this.audio) {
-						// if (this.progress === 0 && !flag) {
-						// 	flag = true;
-						// 	this.emit('start');
-						// }
+				if (this.command) {
+					await this.stop();
+				}
+				console.log("PLAY")
 
-						if (this.progress >= 0 && this.playing) {
-							this.emit('progress', this.progress);
-						}
+				this.play();
 
-						console.log(this.progress, this.audio.currentTime, this.audio.duration);
-
-						if (this.progress === 1) {
-							console.log("end")
-							clearInterval(this.int);
-							this.emit('end');
-							return resolve();
-						}
-					}
-				}, 1000);
+				this.command = this.ffmpeg(p, resolve);
+				
+				this.command.pipe(this.speaker, { end: false });
 			}
 		});
 	}
@@ -217,8 +260,6 @@ export class Player extends EventEmitter {
 							if (!track.name) {
 								track.name = name;
 							}
-
-							updateTrack(track);
 						}
 
 						filePath = path.join('.', 'data', 'songs', `${track.author} - ${track.name}.mp3`);
@@ -226,7 +267,7 @@ export class Player extends EventEmitter {
 						if (!fs.existsSync(filePath)) {
 							let flag = false;
 
-							const command = ffmpeg().input(stream)
+							const command = Ffmpeg().input(stream)
 								.format('mp3')
 								.on('start', (commandLine) => {
 									console.log('Spawned FFmpeg with command: ' + commandLine);
