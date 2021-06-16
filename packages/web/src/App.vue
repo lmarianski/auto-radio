@@ -1,27 +1,16 @@
 <template>
 	<v-app>
-		<v-app-bar app></v-app-bar>
+		<v-app-bar density="compact" app>
+			<input type="text" v-model.lazy="search">
+			<v-btn icon @click="spotifySearch">
+				<v-icon>mdi-plus</v-icon>
+			</v-btn>
+		</v-app-bar>
 		<v-main>
 			<v-container fluid>
 				<v-row>
 					<v-col cols="6">
-						<ul>
-							<li v-for="val in sortedTracks">
-								<v-row>
-									<v-col cols="9">
-										{{ val.name }}
-										<br />
-										<span>{{ val.author }}</span>
-									</v-col>
-									<v-col cols="3">
-										{{ val.votes }}
-										<v-btn fla text @click="upvote(val.id)">
-											<v-icon>mdi-arrow-top-bold</v-icon>
-										</v-btn>
-									</v-col>
-								</v-row>
-							</li>
-						</ul>
+						<track-list :tracks="tracks"></track-list>
 					</v-col>
 					<v-col cols="6" style="text-align: center;">
 						<player
@@ -43,65 +32,78 @@
 <script lang="ts">
 import { Socket } from 'socket.io-client';
 import { defineComponent } from 'vue';
+
 // import HelloWorld from './components/HelloWorld.vue';
 import Player from './components/Player.vue';
+import TrackList from './components/TrackList.vue';
+
 
 import socket from "./socket";
+import { createPeer } from './webrtc';
 (window as any).socket = socket;
 
-function createConnection(socket: Socket, {
-	polite
-} = { polite: true }) {
-	const pc = new RTCPeerConnection();
+// function createConnection(socket: Socket, {
+// 	polite
+// } = { polite: true }) {
+// 	const pc = new RTCPeerConnection();
 
-	pc.onconnectionstatechange = state => console.log(state);
+// 	pc.onconnectionstatechange = state => console.log(state);
 
-	pc.onicecandidate = ({ candidate }) => {
-		socket.emit("webrtc-msg", { candidate })
-	};
-	pc.onnegotiationneeded = async () => {
-		const offer = await pc.createOffer();
-		if (pc.signalingState != "stable") return;
-		await pc.setLocalDescription(offer);
-		socket.emit('webrtc-msg', { description: pc.localDescription });
-	};
+// 	pc.onicecandidate = ({ candidate }) => {
+// 		socket.emit("webrtc-msg", { candidate })
+// 	};
+// 	pc.onnegotiationneeded = async () => {
+// 		const offer = await pc.createOffer();
+// 		if (pc.signalingState != "stable") return;
+// 		await pc.setLocalDescription(offer);
+// 		socket.emit('webrtc-msg', { description: pc.localDescription });
+// 	};
 
-	socket.on("webrtc-msg", async ({ description, candidate }) => {
-		console.log("webrtc msg", description, candidate)
-		if (description) {
-			if (description.type == "offer" && pc.signalingState != "stable") {
-				if (!polite) return;
-				await Promise.all([
-					pc.setLocalDescription({ type: "rollback" }),
-					pc.setRemoteDescription(description)
-				]);
-			} else {
-				await pc.setRemoteDescription(description);
-			}
+// 	socket.on("webrtc-msg", async ({ description, candidate }) => {
+// 		console.log("webrtc msg", description, candidate)
+// 		if (description) {
+// 			if (description.type == "offer" && pc.signalingState != "stable") {
+// 				if (!polite) return;
+// 				await Promise.all([
+// 					pc.setLocalDescription({ type: "rollback" }),
+// 					pc.setRemoteDescription(description)
+// 				]);
+// 			} else {
+// 				await pc.setRemoteDescription(description);
+// 			}
 
-			if (description.type === "offer") {
-				await pc.setLocalDescription(await pc.createAnswer());
-				socket.emit('webrtc-msg', { description: pc.localDescription });
-			}
-		} else if (candidate) {
-			await pc.addIceCandidate(candidate);
-		}
-	});
+// 			if (description.type === "offer") {
+// 				await pc.setLocalDescription(await pc.createAnswer());
+// 				socket.emit('webrtc-msg', { description: pc.localDescription });
+// 			}
+// 		} else if (candidate) {
+// 			await pc.addIceCandidate(candidate);
+// 		}
+// 	});
 
-	return pc;
-}
+// 	return pc;
+// }
 
 export default defineComponent({
 	name: 'App',
 	components: {
-		Player
+		Player,
+		TrackList
 	},
-	data: () => ({
+	data: (): {
+		tracks: any[],
+		nowPlaying: any,
+		progress: number,
+		playing: boolean,
+		socket: Socket,
+		search: string
+	} => ({
 		tracks: [],
 		nowPlaying: null,
 		progress: 0,
 		playing: false,
 		socket,
+		search: ""
 	}),
 	mounted() {
 		(window as any).vue = this;
@@ -131,26 +133,24 @@ export default defineComponent({
 		});
 	},
 	methods: {
-		upvote(id: string) {
-			socket.emit("vote", id)
+		spotifySearch() {
+			socket.once("spotify-search", (results) => {
+
+			})
+			socket.emit("spotify-search", this.search);
 		},
-		async sendMic() {
+		sendMic() {
 			navigator.mediaDevices.getUserMedia({
 				audio: true,
 				video: false
-			}).then((media) => {
-				const pc = createConnection(socket);
+			}).then((stream) => {
+				const peer = createPeer(this.socket as Socket);
 
-				media.getAudioTracks().forEach(track => {
-					pc.addTrack(track);
-				});
+				peer.addStream(stream);
 			});
 		}
 	},
 	computed: {
-		sortedTracks() {
-			return (this as unknown as { tracks: any[] }).tracks.sort((a, b) => +b.votes - +a.votes);
-		}
 	}
 });
 </script>

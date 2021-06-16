@@ -20,7 +20,11 @@ import { defineComponent } from 'vue';
 
 export default defineComponent({
 	name: 'Player',
-
+	emits: [
+		'play',
+		'pause',
+		'skip'
+	],
 	props: {
 		nowPlaying: Object,
 		progress: Number,
