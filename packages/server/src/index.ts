@@ -27,34 +27,43 @@ const port = process.env.PORT || 3000;
 
 app.use(express.static(webPath));
 
-new WebRTCManager(io);
+// new WebRTCManager(io);
+
+// io.use(WebRTCManager);
 
 io.on('connection', async (socket) => {
 	socket.emit('tracks', await getTracks());
 	socket.emit('nowPlaying', player.nowPlaying);
-	socket.emit("playing", (player.audio || {}).playing || false);
+	socket.emit('playing', player.playing);
 
 	socket.on('getTracks', async () => {
 		socket.emit('tracks', await getTracks());
 	});
-	socket.on("vote", async (id) => {
+
+	socket.on('spotify-search', async term => {
+		const results = (await (await spotify).searchTracks(term)).body.tracks;
+		socket.emit('spotify-search', results);
+	});
+
+	socket.on('vote', async (id) => {
 		incrementVotes(id);
-		io.emit("tracks", await getTracks());
+		io.emit('tracks', await getTracks());
 	});
-	socket.on("addTrack", async (uri) => {
+
+	socket.on('addTrack', async (uri) => {
 		await addTracks(uri);
-		io.emit("tracks", await getTracks());
+		io.emit('tracks', await getTracks());
 	});
-	socket.on("pause", async (id) => {
-		pause();
+	socket.on('pause', async (id) => {
+		player.pause();
 	});
-	socket.on("play", async (id) => {
-		play();
+	socket.on('play', async (id) => {
+		player.play();
 	});
-	socket.on("skip", async (id) => {
+	socket.on('skip', async (id) => {
 		skip();
 	});
-	socket.on("start", async (uri) => {
+	socket.on('start', async (uri) => {
 		// addTracks(uri);
 		// io.emit("tracks", await getTracks());
 			//https://open.spotify.com/track/7qH6ICtmf08M8l3bvM27Gc?si=2c5bf0f2d2eb4c71
@@ -73,20 +82,14 @@ io.on('connection', async (socket) => {
 	});
 });
 
-function play() {
-	player.play();
-	io.emit("playing", player.audio.playing);
-}
-
-function pause() {
-	player.pause();
-	io.emit("playing", player.audio.playing);
-}
-
 function skip() {
 	player.stop();
 	playNext();
 }
+
+player.on('playStateChange', (state) => {
+	io.emit("playing", state);
+})
 
 player.on('start', () => {
 	io.emit('nowPlaying', player.nowPlaying);

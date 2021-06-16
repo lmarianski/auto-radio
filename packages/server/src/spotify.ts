@@ -2,7 +2,7 @@ import SpotifyWebApi from 'spotify-web-api-node';
 import ytSearch from 'youtube-search';
 import { DBTrack } from './db';
 
-let tm = 0;
+let tm: NodeJS.Timeout;
 
 const spotifyApi = new SpotifyWebApi({
 	clientId: process.env.SPOTIFY_CLIENT_ID,
